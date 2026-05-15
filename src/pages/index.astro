@@ -1,0 +1,1129 @@
+---
+/**
+ * @module index
+ * @description Main UI — server-rendered page tree with Alpine.js for all dynamic behaviour (page selection, editing, history, diff).
+ */
+import Shell from '../layouts/Shell.astro';
+import Modal from '../components/Modal.astro';
+---
+<script is:inline>
+document.addEventListener('alpine:init', () => {
+  Alpine.data('pawlog', () => ({
+    tree: [],
+
+    selectedPath: null,
+    journeyOpen: {},
+
+    currentFile: null,
+    loading: false,
+
+    panelOpen: false,
+    editingKey: null,
+    editLabel: '',
+    editContent: '',
+    editNote: '',
+    saving: false,
+    saveSuccess: false,
+
+    activeTab: 'edit',
+    history: [],
+    histLoading: false,
+
+    selectedHashes: [],
+    diffLines: [],
+    diffLoading: false,
+    restoringHash: null,
+
+    newPageOpen: false,
+    newPageJourney: '',
+    newPageName: '',
+    newPageSlug: '',
+    newPageDesc: '',
+    newPageSaving: false,
+    newPageError: '',
+
+    newKeyOpen: false,
+    newKeyKey: '',
+    newKeyLabel: '',
+    newKeyDesc: '',
+    newKeyContent: '',
+    newKeySaving: false,
+    newKeyError: '',
+
+    editPageOpen: false,
+    editPageName: '',
+    editPageDesc: '',
+    editPageSaving: false,
+    editPageError: '',
+
+    deletePagePending: false,
+    deletePageSaving: false,
+
+    deleteKeyPending: false,
+    deleteKeySaving: false,
+
+    editGroup: '',
+
+    newKeyGroup: '',
+
+    sectionOpen: false,
+    sectionNewName: '',
+    sectionEditIndex: -1,
+    sectionEditName: '',
+    sectionSaving: false,
+
+    sidebarOpen: true,
+
+    brandFilter: 'all',
+    editBrand: '',
+    newKeyBrand: '',
+
+    dashboard: null,
+    dashLoading: false,
+
+    newJourneyOpen: false,
+    newJourneyName: '',
+    newJourneySlug: '',
+    newJourneyDesc: '',
+    newJourneySaving: false,
+    newJourneyError: '',
+
+    editJourneyOpen: false,
+    editJourneySlug: '',
+    editJourneyName: '',
+    editJourneyDesc: '',
+    editJourneySaving: false,
+    editJourneyError: '',
+
+    deleteJourneyPending: '',
+    deleteJourneySaving: false,
+
+    get filteredItems() {
+      if (!this.currentFile) return {};
+      const items = this.currentFile.items ?? {};
+      if (this.brandFilter === 'all') return items;
+      return Object.fromEntries(
+        Object.entries(items).filter(([, item]) => {
+          const b = item.brand ?? '';
+          return b === '' || b === this.brandFilter;
+        })
+      );
+    },
+
+    get flatEntries() {
+      if (!this.currentFile) return [];
+      const groups = this.currentFile.meta.groups ?? [];
+      const items = this.filteredItems;
+      if (groups.length === 0) {
+        return Object.entries(items).map(([key, item]) => ({ type: 'row', key, item }));
+      }
+      const buckets = {};
+      for (const g of groups) buckets[g] = [];
+      const ungrouped = [];
+      for (const [key, item] of Object.entries(items)) {
+        const g = item.group;
+        if (g && buckets[g] !== undefined) buckets[g].push({ key, item });
+        else ungrouped.push({ key, item });
+      }
+      const result = [];
+      for (const g of groups) {
+        result.push({ type: 'header', name: g });
+        for (const e of buckets[g]) result.push({ type: 'row', key: e.key, item: e.item });
+      }
+      if (ungrouped.length > 0) {
+        result.push({ type: 'header', name: '' });
+        for (const e of ungrouped) result.push({ type: 'row', key: e.key, item: e.item });
+      }
+      return result;
+    },
+
+    cloneFile() {
+      return JSON.parse(JSON.stringify(this.currentFile));
+    },
+
+    async saveFile(data, note) {
+      await fetch('/api/file?path=' + encodeURIComponent(this.selectedPath), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data, note })
+      });
+      this.currentFile = data;
+    },
+
+    toSlug(name) {
+      return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    },
+
+    async init() {
+      this.sidebarOpen = window.innerWidth >= 768;
+      window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768) this.sidebarOpen = true;
+      });
+      await Promise.all([this.loadTree(), this.loadDashboard()]);
+    },
+
+    async loadDashboard() {
+      this.dashLoading = true;
+      const res = await fetch('/api/dashboard');
+      this.dashboard = await res.json();
+      this.dashLoading = false;
+    },
+
+    async loadTree() {
+      const res = await fetch('/api/tree');
+      this.tree = await res.json();
+    },
+
+    async selectPage(path) {
+      this.selectedPath = path;
+      this.panelOpen = false;
+      if (window.innerWidth < 768) this.sidebarOpen = false;
+      this.deletePagePending = false;
+      this.loading = true;
+      const res = await fetch('/api/file?path=' + encodeURIComponent(path));
+      this.currentFile = await res.json();
+      this.loading = false;
+    },
+
+    openEditor(key) {
+      const item = this.currentFile.items[key];
+      this.editingKey = key;
+      this.editLabel = item.label;
+      this.editContent = item.content;
+      this.editGroup = item.group ?? '';
+      this.editBrand = item.brand ?? '';
+      this.editNote = '';
+      this.activeTab = 'edit';
+      this.history = [];
+      this.selectedHashes = [];
+      this.diffLines = [];
+      this.deleteKeyPending = false;
+      this.restoringHash = null;
+      this.panelOpen = true;
+    },
+
+    async saveItem() {
+      if (!this.editingKey || !this.selectedPath) return;
+      this.saving = true;
+      const updated = this.cloneFile();
+      updated.items[this.editingKey].content = this.editContent;
+      if (this.editGroup) updated.items[this.editingKey].group = this.editGroup;
+      else delete updated.items[this.editingKey].group;
+      if (this.editBrand) updated.items[this.editingKey].brand = this.editBrand;
+      else delete updated.items[this.editingKey].brand;
+      await this.saveFile(updated, this.editNote);
+      this.saving = false;
+      this.saveSuccess = true;
+      setTimeout(() => this.saveSuccess = false, 2000);
+      if (this.activeTab === 'history') await this.loadHistory();
+    },
+
+    async deleteKey() {
+      if (!this.editingKey || !this.selectedPath) return;
+      this.deleteKeySaving = true;
+      const updated = this.cloneFile();
+      delete updated.items[this.editingKey];
+      await this.saveFile(updated, 'Delete key: ' + this.editingKey);
+      this.deleteKeySaving = false;
+      this.deleteKeyPending = false;
+      this.panelOpen = false;
+    },
+
+    async loadHistory() {
+      this.histLoading = true;
+      this.selectedHashes = [];
+      this.diffLines = [];
+      this.restoringHash = null;
+      const res = await fetch('/api/log?path=' + encodeURIComponent(this.selectedPath));
+      this.history = await res.json();
+      this.histLoading = false;
+    },
+
+    async restoreVersion(hash) {
+      if (!this.editingKey || !this.selectedPath) return;
+      this.restoringHash = hash;
+      const res = await fetch('/api/show?path=' + encodeURIComponent(this.selectedPath) + '&hash=' + hash);
+      const raw = await res.text();
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { this.restoringHash = null; return; }
+      const historicContent = parsed.items?.[this.editingKey]?.content;
+      if (historicContent === undefined) { this.restoringHash = null; return; }
+      const updated = this.cloneFile();
+      updated.items[this.editingKey].content = historicContent;
+      await this.saveFile(updated, 'Restore ' + this.editingKey + ' to ' + hash.substring(0, 7));
+      this.editContent = historicContent;
+      this.restoringHash = null;
+      this.activeTab = 'edit';
+      this.saveSuccess = true;
+      setTimeout(() => this.saveSuccess = false, 2000);
+    },
+
+    toggleHashSelect(hash) {
+      if (this.selectedHashes.includes(hash)) {
+        this.selectedHashes = this.selectedHashes.filter(h => h !== hash);
+      } else if (this.selectedHashes.length < 2) {
+        this.selectedHashes.push(hash);
+      } else {
+        this.selectedHashes = [this.selectedHashes[1], hash];
+      }
+    },
+
+    async loadDiff() {
+      if (this.selectedHashes.length !== 2) return;
+      this.diffLoading = true;
+      const [a, b] = this.selectedHashes;
+      const res = await fetch(
+        '/api/diff?path=' + encodeURIComponent(this.selectedPath) +
+        '&from=' + a + '&to=' + b
+      );
+      const raw = await res.text();
+      this.diffLines = raw.split('\n');
+      this.diffLoading = false;
+    },
+
+    async switchTab(tab) {
+      this.activeTab = tab;
+      if (tab === 'history' && this.history.length === 0) await this.loadHistory();
+    },
+
+    formatDate(iso) {
+      return new Date(iso).toLocaleString('en-GB', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+    },
+
+    openNewPage(journeySlug) {
+      this.newPageJourney = journeySlug;
+      this.newPageName = '';
+      this.newPageSlug = '';
+      this.newPageDesc = '';
+      this.newPageError = '';
+      this.newPageOpen = true;
+    },
+
+    onPageNameInput() {
+      this.newPageSlug = this.toSlug(this.newPageName);
+    },
+
+    async createPage() {
+      this.newPageSaving = true;
+      this.newPageError = '';
+      try {
+        const res = await fetch('/api/page', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            journey: this.newPageJourney,
+            slug: this.newPageSlug,
+            page: this.newPageName,
+            description: this.newPageDesc,
+          })
+        });
+        if (!res.ok) {
+          const body = await res.json();
+          this.newPageError = body.error || 'Failed to create page';
+          return;
+        }
+        const { path } = await res.json();
+        await this.loadTree();
+        this.newPageOpen = false;
+        this.journeyOpen[this.newPageJourney] = true;
+        await this.selectPage(path);
+      } finally {
+        this.newPageSaving = false;
+      }
+    },
+
+    openNewKey(group) {
+      this.newKeyKey = '';
+      this.newKeyLabel = '';
+      this.newKeyDesc = '';
+      this.newKeyContent = '';
+      this.newKeyGroup = group || '';
+      this.newKeyBrand = '';
+      this.newKeyError = '';
+      this.newKeyOpen = true;
+    },
+
+    openEditPage() {
+      this.editPageName = this.currentFile.meta.page;
+      this.editPageDesc = this.currentFile.meta.description ?? '';
+      this.editPageError = '';
+      this.editPageOpen = true;
+    },
+
+    async savePage() {
+      if (!this.editPageName.trim()) {
+        this.editPageError = 'Page name is required';
+        return;
+      }
+      this.editPageSaving = true;
+      this.editPageError = '';
+      try {
+        const res = await fetch('/api/page', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: this.selectedPath,
+            page: this.editPageName,
+            description: this.editPageDesc,
+          })
+        });
+        if (!res.ok) {
+          const body = await res.json();
+          this.editPageError = body.error || 'Failed to update page';
+          return;
+        }
+        await this.loadTree();
+        await this.selectPage(this.selectedPath);
+        this.editPageOpen = false;
+      } finally {
+        this.editPageSaving = false;
+      }
+    },
+
+    async deletePage() {
+      this.deletePageSaving = true;
+      try {
+        await fetch('/api/page', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: this.selectedPath })
+        });
+        this.selectedPath = null;
+        this.currentFile = null;
+        this.deletePagePending = false;
+        await this.loadTree();
+      } finally {
+        this.deletePageSaving = false;
+      }
+    },
+
+    openSections() {
+      this.sectionNewName = '';
+      this.sectionEditIndex = -1;
+      this.sectionEditName = '';
+      this.sectionOpen = true;
+    },
+
+    async addGroup() {
+      const name = this.sectionNewName.trim();
+      if (!name || (this.currentFile.meta.groups ?? []).includes(name)) return;
+      this.sectionSaving = true;
+      const updated = this.cloneFile();
+      updated.meta.groups = [...(updated.meta.groups ?? []), name];
+      await this.saveFile(updated, 'Add group: ' + name);
+      this.sectionNewName = '';
+      this.sectionSaving = false;
+    },
+
+    async renameGroup() {
+      const groups = this.currentFile.meta.groups ?? [];
+      const oldName = groups[this.sectionEditIndex];
+      const newName = this.sectionEditName.trim();
+      if (!newName || newName === oldName) { this.sectionEditIndex = -1; return; }
+      this.sectionSaving = true;
+      const updated = this.cloneFile();
+      updated.meta.groups = updated.meta.groups.map((g, i) => i === this.sectionEditIndex ? newName : g);
+      for (const item of Object.values(updated.items)) {
+        if (item.group === oldName) item.group = newName;
+      }
+      await this.saveFile(updated, 'Rename group: ' + oldName + ' → ' + newName);
+      this.sectionEditIndex = -1;
+      this.sectionSaving = false;
+    },
+
+    async deleteGroup(name) {
+      this.sectionSaving = true;
+      const updated = this.cloneFile();
+      updated.meta.groups = (updated.meta.groups ?? []).filter(g => g !== name);
+      for (const item of Object.values(updated.items)) {
+        if (item.group === name) delete item.group;
+      }
+      await this.saveFile(updated, 'Delete group: ' + name);
+      this.sectionSaving = false;
+    },
+
+    openNewJourney() {
+      this.newJourneyName = '';
+      this.newJourneySlug = '';
+      this.newJourneyDesc = '';
+      this.newJourneyError = '';
+      this.newJourneyOpen = true;
+    },
+
+    onJourneyNameInput() {
+      this.newJourneySlug = this.toSlug(this.newJourneyName);
+    },
+
+    async createJourney() {
+      this.newJourneySaving = true;
+      this.newJourneyError = '';
+      try {
+        const res = await fetch('/api/journey', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: this.newJourneySlug,
+            name: this.newJourneyName,
+            description: this.newJourneyDesc,
+          })
+        });
+        if (!res.ok) {
+          const body = await res.json();
+          this.newJourneyError = body.error || 'Failed to create journey';
+          return;
+        }
+        await this.loadTree();
+        this.newJourneyOpen = false;
+        this.journeyOpen[this.newJourneySlug] = true;
+      } finally {
+        this.newJourneySaving = false;
+      }
+    },
+
+    openEditJourney(journey) {
+      this.editJourneySlug = journey.slug;
+      this.editJourneyName = journey.name;
+      this.editJourneyDesc = journey.description ?? '';
+      this.editJourneyError = '';
+      this.editJourneyOpen = true;
+    },
+
+    async saveJourney() {
+      if (!this.editJourneyName.trim()) {
+        this.editJourneyError = 'Journey name is required';
+        return;
+      }
+      this.editJourneySaving = true;
+      this.editJourneyError = '';
+      try {
+        const res = await fetch('/api/journey', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: this.editJourneySlug,
+            name: this.editJourneyName,
+            description: this.editJourneyDesc,
+          })
+        });
+        if (!res.ok) {
+          const body = await res.json();
+          this.editJourneyError = body.error || 'Failed to update journey';
+          return;
+        }
+        await this.loadTree();
+        this.editJourneyOpen = false;
+      } finally {
+        this.editJourneySaving = false;
+      }
+    },
+
+    async deleteJourney() {
+      this.deleteJourneySaving = true;
+      try {
+        await fetch('/api/journey', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: this.deleteJourneyPending })
+        });
+        if (this.selectedPath?.startsWith(this.deleteJourneyPending + '/')) {
+          this.selectedPath = null;
+          this.currentFile = null;
+        }
+        this.deleteJourneyPending = '';
+        await this.loadTree();
+      } finally {
+        this.deleteJourneySaving = false;
+      }
+    },
+
+    async createKey() {
+      this.newKeyError = '';
+      if (!/^[a-z][a-z0-9_]*$/.test(this.newKeyKey)) {
+        this.newKeyError = 'Key must be snake_case (lowercase letters and underscores)';
+        return;
+      }
+      if (this.currentFile.items[this.newKeyKey]) {
+        this.newKeyError = 'Key already exists in this page';
+        return;
+      }
+      if (!this.newKeyLabel.trim()) {
+        this.newKeyError = 'Label is required';
+        return;
+      }
+      this.newKeySaving = true;
+      try {
+        const item = { label: this.newKeyLabel.trim(), content: this.newKeyContent };
+        if (this.newKeyDesc.trim()) item.description = this.newKeyDesc.trim();
+        if (this.newKeyGroup) item.group = this.newKeyGroup;
+        if (this.newKeyBrand) item.brand = this.newKeyBrand;
+        const updated = this.cloneFile();
+        updated.items[this.newKeyKey] = item;
+        await this.saveFile(updated, 'Add key: ' + this.newKeyKey);
+        this.newKeyOpen = false;
+      } finally {
+        this.newKeySaving = false;
+      }
+    },
+  }));
+});
+</script>
+<Shell>
+<div class="app" x-data="pawlog()">
+
+<!-- SIDEBAR OVERLAY (mobile) -->
+<div class="sidebar-overlay" x-show="sidebarOpen" @click="sidebarOpen = false"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" :class="{ 'sidebar--open': sidebarOpen }">
+  <div class="sidebar-header">
+    <span class="sidebar-logo">&#x1F43E;</span>
+    <span class="sidebar-title">Pawlog</span>
+  </div>
+  <nav class="sidebar-nav">
+    <button
+      class="sidebar-nav-btn"
+      :class="{ 'sidebar-nav-btn--active': !selectedPath }"
+      @click="selectedPath = ''"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Dashboard
+    </button>
+    <div class="sidebar-section-label">Journeys</div>
+    <template x-for="journey in tree" :key="journey.slug">
+      <div class="journey-group">
+        <div class="journey-row">
+          <button
+            class="journey-btn"
+            @click="journeyOpen[journey.slug] = !journeyOpen[journey.slug]"
+            :class="{ 'journey-btn--open': journeyOpen[journey.slug] }"
+          >
+            <span class="journey-chevron" :class="{ rotated: journeyOpen[journey.slug] }">&#x203A;</span>
+            <span x-text="journey.name"></span>
+          </button>
+          <template x-if="deleteJourneyPending !== journey.slug">
+            <div class="journey-actions">
+              <button class="new-page-btn" @click.stop="openNewPage(journey.slug)" title="New page">+</button>
+              <button class="new-page-btn" @click.stop="openEditJourney(journey)" title="Edit journey">&#x270E;</button>
+              <button class="new-page-btn new-page-btn--danger" @click.stop="deleteJourneyPending = journey.slug" title="Delete journey"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+            </div>
+          </template>
+          <template x-if="deleteJourneyPending === journey.slug">
+            <div class="journey-delete-confirm">
+              <button class="journey-delete-yes" @click.stop="deleteJourney()" :disabled="deleteJourneySaving" x-text="deleteJourneySaving ? '…' : 'Del'"></button>
+              <button class="journey-delete-no" @click.stop="deleteJourneyPending = ''">&#x2715;</button>
+            </div>
+          </template>
+        </div>
+        <div class="page-list" x-show="journeyOpen[journey.slug]" x-transition>
+          <template x-for="page in journey.pages" :key="page.path">
+            <button
+              class="page-btn"
+              :class="{ 'page-btn--active': selectedPath === page.path }"
+              @click="selectPage(page.path)"
+              x-text="page.name"
+            ></button>
+          </template>
+        </div>
+      </div>
+    </template>
+    <div class="sidebar-footer">
+      <button class="new-journey-btn" @click="openNewJourney()">+ New journey</button>
+    </div>
+  </nav>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="main">
+  <div class="mobile-topbar">
+    <button class="hamburger-btn" @click="sidebarOpen = !sidebarOpen" aria-label="Toggle navigation">
+      <span class="hamburger-icon"></span>
+      <span class="hamburger-icon"></span>
+      <span class="hamburger-icon"></span>
+    </button>
+    <span class="mobile-title">&#x1F43E; Pawlog</span>
+  </div>
+
+  <div x-show="!selectedPath">
+    <div class="loading-state" x-show="dashLoading" style="min-height:200px;">
+      <div class="spinner"></div>
+    </div>
+    <div class="dashboard" x-show="!dashLoading && dashboard">
+      <h1 class="dashboard-heading">&#x1F43E; Pawlog</h1>
+      <p class="dashboard-sub">Pet insurance copy management</p>
+
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-value" x-text="dashboard?.stats?.journeys ?? '—'"></div>
+          <div class="stat-label">Journeys</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="dashboard?.stats?.pages ?? '—'"></div>
+          <div class="stat-label">Pages</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="dashboard?.stats?.items ?? '—'"></div>
+          <div class="stat-label">Copy items</div>
+        </div>
+      </div>
+
+      <div class="section-heading">Recent changes</div>
+
+      <div class="dashboard-empty" x-show="(dashboard?.recent ?? []).length === 0">
+        No commits yet.
+      </div>
+
+      <div class="recent-list" x-show="(dashboard?.recent ?? []).length > 0">
+        <template x-for="commit in (dashboard?.recent ?? [])" :key="commit.hash">
+          <div class="recent-entry">
+            <div class="recent-top">
+              <span class="recent-msg" x-text="commit.message"></span>
+              <div class="recent-meta">
+                <span class="recent-hash" x-text="commit.hash.substring(0,7)"></span>
+                <span class="recent-date" x-text="formatDate(commit.date)"></span>
+              </div>
+            </div>
+            <div class="recent-files">
+              <template x-for="file in commit.files" :key="file">
+                <template x-if="file.endsWith('.json') && file !== 'journeys.json'">
+                  <button
+                    class="recent-file-btn"
+                    @click="selectPage(file)"
+                    x-text="file"
+                  ></button>
+                </template>
+                <template x-if="!file.endsWith('.json') || file === 'journeys.json'">
+                  <span class="recent-file-tag" x-text="file"></span>
+                </template>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <div class="loading-state" x-show="selectedPath && loading">
+    <div class="spinner"></div>
+  </div>
+
+  <div class="content-area" x-show="selectedPath && !loading && currentFile">
+    <header class="content-header">
+      <div>
+        <h1 class="page-title" x-text="currentFile?.meta?.page"></h1>
+        <p class="page-desc" x-text="currentFile?.meta?.description ?? ''" x-show="currentFile?.meta?.description"></p>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" @click="openEditPage()" title="Edit page">&#x270E;</button>
+        <template x-if="!deletePagePending">
+          <button class="icon-btn icon-btn--danger" @click="deletePagePending = true" title="Delete page"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+        </template>
+        <template x-if="deletePagePending">
+          <div class="delete-confirm">
+            <span>Delete page?</span>
+            <button class="danger-btn" @click="deletePage()" :disabled="deletePageSaving" x-text="deletePageSaving ? 'Deleting…' : 'Yes, delete'"></button>
+            <button class="cancel-btn" @click="deletePagePending = false">Cancel</button>
+          </div>
+        </template>
+        <button class="groups-btn" @click="openSections()">+ Sections</button>
+      </div>
+    </header>
+
+    <div class="brand-filter">
+      <button class="brand-pill" :class="{ 'brand-pill--active': brandFilter === 'all' }" @click="brandFilter = 'all'">All brands</button>
+      <button class="brand-pill brand-pill--pp" :class="{ 'brand-pill--active': brandFilter === 'perfect_pet' }" @click="brandFilter = 'perfect_pet'">Perfect Pet</button>
+      <button class="brand-pill brand-pill--np" :class="{ 'brand-pill--active': brandFilter === 'now_pet' }" @click="brandFilter = 'now_pet'">Now Pet</button>
+    </div>
+
+    <table class="copy-table">
+      <thead>
+        <tr>
+          <th>Key</th>
+          <th>Label</th>
+          <th>Description</th>
+          <th>Brand</th>
+          <th>Content</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="row in flatEntries" :key="row.type === 'header' ? '__h_' + row.name : row.key">
+          <tr
+            :class="row.type === 'header' ? 'group-header-row' : 'copy-row'"
+            @click="row.type === 'row' && openEditor(row.key)"
+          >
+            <td x-show="row.type === 'header'" colspan="6">
+              <div class="group-header-cell">
+                <span class="group-header-name" x-text="row.name || 'Ungrouped'"></span>
+                <button class="add-key-btn add-key-btn--section" @click.stop="openNewKey(row.name)">+ Add key</button>
+              </div>
+            </td>
+            <td x-show="row.type === 'row'"><code class="key-badge" x-text="row.key ?? ''"></code></td>
+            <td x-show="row.type === 'row'" class="label-cell" x-text="row.item?.label ?? ''"></td>
+            <td x-show="row.type === 'row'" class="desc-cell" x-text="row.item?.description ?? '—'"></td>
+            <td x-show="row.type === 'row'" class="brand-cell">
+              <span
+                x-show="row.item?.brand === 'perfect_pet'"
+                class="brand-badge brand-badge--pp"
+              >Perfect Pet</span>
+              <span
+                x-show="row.item?.brand === 'now_pet'"
+                class="brand-badge brand-badge--np"
+              >Now Pet</span>
+              <span
+                x-show="!row.item?.brand"
+                class="brand-badge brand-badge--all"
+              >All</span>
+            </td>
+            <td x-show="row.type === 'row'" class="content-cell" x-text="row.item?.content ?? ''"></td>
+            <td x-show="row.type === 'row'" class="action-cell">
+              <button class="edit-btn" @click.stop="openEditor(row.key)">Edit</button>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+</main>
+
+<!-- OVERLAY (slide panel only) -->
+<div
+  class="overlay"
+  x-show="panelOpen"
+  @click="panelOpen = false"
+  x-transition:enter="overlay-enter"
+  x-transition:enter-start="overlay-start"
+  x-transition:enter-end="overlay-end"
+></div>
+
+<!-- SLIDE-OVER PANEL -->
+<aside
+  class="panel"
+  x-show="panelOpen"
+  x-transition:enter="panel-enter"
+  x-transition:enter-start="panel-start"
+  x-transition:enter-end="panel-end"
+  x-transition:leave="panel-enter"
+  x-transition:leave-start="panel-end"
+  x-transition:leave-end="panel-start"
+>
+  <div class="panel-header">
+    <div>
+      <div class="panel-label" x-text="editLabel"></div>
+      <code class="panel-key" x-text="editingKey"></code>
+    </div>
+    <button class="panel-close" @click="panelOpen = false">&#x2715;</button>
+  </div>
+
+  <div class="panel-tabs">
+    <button class="tab-btn" :class="{ 'tab-btn--active': activeTab === 'edit' }" @click="switchTab('edit')">Edit</button>
+    <button class="tab-btn" :class="{ 'tab-btn--active': activeTab === 'history' }" @click="switchTab('history')">History</button>
+  </div>
+
+  <div class="panel-body" x-show="activeTab === 'edit'">
+    <div>
+      <label class="field-label">Content</label>
+      <textarea class="content-editor" x-model="editContent" rows="6"></textarea>
+    </div>
+
+    <div x-show="(currentFile?.meta?.groups ?? []).length > 0">
+      <label class="field-label">Section <span class="optional">(optional)</span></label>
+      <select class="note-input" x-model="editGroup">
+        <option value="">— None —</option>
+        <template x-for="g in (currentFile?.meta?.groups ?? [])" :key="g">
+          <option :value="g" x-text="g"></option>
+        </template>
+      </select>
+    </div>
+
+    <div>
+      <label class="field-label">Brand <span class="optional">(optional)</span></label>
+      <select class="note-input" x-model="editBrand">
+        <option value="">All brands</option>
+        <option value="perfect_pet">Perfect Pet</option>
+        <option value="now_pet">Now Pet</option>
+      </select>
+    </div>
+
+    <div>
+      <label class="field-label">Note <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="editNote" placeholder="e.g. Q2 rebrand update" />
+    </div>
+
+    <div class="panel-actions">
+      <button
+        class="save-btn"
+        @click="saveItem()"
+        :disabled="saving"
+        x-text="saving ? 'Saving…' : (saveSuccess ? 'Saved ✓' : 'Save')"
+        :class="{ 'save-btn--success': saveSuccess }"
+      ></button>
+      <template x-if="!deleteKeyPending">
+        <button class="icon-btn icon-btn--danger" @click="deleteKeyPending = true" title="Delete key"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+      </template>
+      <template x-if="deleteKeyPending">
+        <div class="delete-confirm">
+          <span>Delete this key?</span>
+          <button class="danger-btn" @click="deleteKey()" :disabled="deleteKeySaving" x-text="deleteKeySaving ? 'Deleting…' : 'Yes, delete'"></button>
+          <button class="cancel-btn" @click="deleteKeyPending = false">Cancel</button>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <div class="panel-body" x-show="activeTab === 'history'">
+    <div class="hist-loading" x-show="histLoading">Loading history&#x2026;</div>
+
+    <div x-show="!histLoading && history.length === 0" class="hist-empty">No commits yet for this file.</div>
+
+    <div x-show="!histLoading && history.length > 0">
+      <p class="hist-hint" x-show="selectedHashes.length < 2">Select two commits to diff them.</p>
+      <button class="diff-btn" x-show="selectedHashes.length === 2" @click="loadDiff()">Show Diff</button>
+
+      <div class="diff-view" x-show="diffLines.length > 0">
+        <button class="diff-close" @click="diffLines = []; selectedHashes = []" aria-label="Close diff">&times;</button>
+        <template x-for="(line, i) in diffLines" :key="i">
+          <div
+            class="diff-line"
+            :class="{
+              'diff-add': line.startsWith('+') && !line.startsWith('+++'),
+              'diff-remove': line.startsWith('-') && !line.startsWith('---'),
+              'diff-meta': line.startsWith('@@') || line.startsWith('diff') || line.startsWith('index')
+            }"
+            x-text="line || ' '"
+          ></div>
+        </template>
+      </div>
+
+      <ul class="hist-list">
+        <template x-for="(entry, idx) in history" :key="entry.hash">
+          <li
+            class="hist-entry"
+            :class="{ 'hist-entry--selected': selectedHashes.includes(entry.hash) }"
+            @click="toggleHashSelect(entry.hash)"
+          >
+            <div class="hist-top">
+              <span class="hist-msg" x-text="entry.message"></span>
+              <span class="hist-hash" x-text="entry.hash.substring(0, 7)"></span>
+            </div>
+            <div class="hist-bottom">
+              <span class="hist-date" x-text="formatDate(entry.date)"></span>
+              <button
+                x-show="idx > 0"
+                class="restore-btn"
+                :disabled="restoringHash === entry.hash"
+                x-text="restoringHash === entry.hash ? 'Restoring…' : 'Use this version'"
+                @click.stop="restoreVersion(entry.hash)"
+              ></button>
+            </div>
+          </li>
+        </template>
+      </ul>
+    </div>
+  </div>
+</aside>
+
+<!-- NEW PAGE MODAL -->
+<Modal title="New page" state="newPageOpen">
+  <div slot="body">
+    <div>
+      <label class="field-label">Journey</label>
+      <select class="note-input" x-model="newPageJourney">
+        <template x-for="j in tree" :key="j.slug">
+          <option :value="j.slug" x-text="j.name"></option>
+        </template>
+      </select>
+    </div>
+    <div>
+      <label class="field-label">Page name</label>
+      <input class="note-input" type="text" x-model="newPageName" @input="onPageNameInput()" placeholder="e.g. Homepage" />
+    </div>
+    <div>
+      <label class="field-label">Slug <span class="optional">(filename)</span></label>
+      <input class="note-input" type="text" x-model="newPageSlug" placeholder="e.g. homepage" />
+    </div>
+    <div>
+      <label class="field-label">Description <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="newPageDesc" placeholder="e.g. Main landing page copy" />
+    </div>
+    <p class="error-msg" x-show="newPageError" x-text="newPageError"></p>
+  </div>
+  <div slot="footer">
+    <button
+      class="save-btn"
+      @click="createPage()"
+      :disabled="newPageSaving || !newPageName || !newPageSlug"
+      x-text="newPageSaving ? 'Creating…' : 'Create page'"
+    ></button>
+  </div>
+</Modal>
+
+<!-- NEW KEY MODAL -->
+<Modal title="New key" state="newKeyOpen">
+  <div slot="body">
+    <div>
+      <label class="field-label">Key <span class="optional">(snake_case)</span></label>
+      <input class="note-input" type="text" x-model="newKeyKey" placeholder="e.g. hero_headline" />
+    </div>
+    <div>
+      <label class="field-label">Label</label>
+      <input class="note-input" type="text" x-model="newKeyLabel" placeholder="e.g. Hero Headline" />
+    </div>
+    <div>
+      <label class="field-label">Description <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="newKeyDesc" placeholder="e.g. Main heading on hero section" />
+    </div>
+    <div x-show="(currentFile?.meta?.groups ?? []).length > 0">
+      <label class="field-label">Section <span class="optional">(optional)</span></label>
+      <select class="note-input" x-model="newKeyGroup">
+        <option value="">— None —</option>
+        <template x-for="g in (currentFile?.meta?.groups ?? [])" :key="g">
+          <option :value="g" x-text="g"></option>
+        </template>
+      </select>
+    </div>
+    <div>
+      <label class="field-label">Brand <span class="optional">(optional)</span></label>
+      <select class="note-input" x-model="newKeyBrand">
+        <option value="">All brands</option>
+        <option value="perfect_pet">Perfect Pet</option>
+        <option value="now_pet">Now Pet</option>
+      </select>
+    </div>
+    <div>
+      <label class="field-label">Content</label>
+      <textarea class="content-editor" x-model="newKeyContent" rows="4" placeholder="Copy text goes here"></textarea>
+    </div>
+    <p class="error-msg" x-show="newKeyError" x-text="newKeyError"></p>
+  </div>
+  <div slot="footer">
+    <button
+      class="save-btn"
+      @click="createKey()"
+      :disabled="newKeySaving || !newKeyKey || !newKeyLabel"
+      x-text="newKeySaving ? 'Adding…' : 'Add key'"
+    ></button>
+  </div>
+</Modal>
+
+<!-- EDIT PAGE MODAL -->
+<Modal title="Edit page" state="editPageOpen">
+  <div slot="body">
+    <div>
+      <label class="field-label">Page name</label>
+      <input class="note-input" type="text" x-model="editPageName" placeholder="e.g. Homepage" />
+    </div>
+    <div>
+      <label class="field-label">Description <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="editPageDesc" placeholder="e.g. Main landing page copy" />
+    </div>
+    <p class="error-msg" x-show="editPageError" x-text="editPageError"></p>
+  </div>
+  <div slot="footer">
+    <button
+      class="save-btn"
+      @click="savePage()"
+      :disabled="editPageSaving || !editPageName"
+      x-text="editPageSaving ? 'Saving…' : 'Save changes'"
+    ></button>
+  </div>
+</Modal>
+
+<!-- NEW JOURNEY MODAL -->
+<Modal title="New journey" state="newJourneyOpen">
+  <div slot="body">
+    <div>
+      <label class="field-label">Journey name</label>
+      <input class="note-input" type="text" x-model="newJourneyName" @input="onJourneyNameInput()" placeholder="e.g. Email" />
+    </div>
+    <div>
+      <label class="field-label">Slug <span class="optional">(folder name)</span></label>
+      <input class="note-input" type="text" x-model="newJourneySlug" placeholder="e.g. email" />
+    </div>
+    <div>
+      <label class="field-label">Description <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="newJourneyDesc" placeholder="e.g. Transactional and marketing emails" />
+    </div>
+    <p class="error-msg" x-show="newJourneyError" x-text="newJourneyError"></p>
+  </div>
+  <div slot="footer">
+    <button
+      class="save-btn"
+      @click="createJourney()"
+      :disabled="newJourneySaving || !newJourneyName || !newJourneySlug"
+      x-text="newJourneySaving ? 'Creating…' : 'Create journey'"
+    ></button>
+  </div>
+</Modal>
+
+<!-- EDIT JOURNEY MODAL -->
+<Modal title="Edit journey" state="editJourneyOpen">
+  <div slot="body">
+    <div>
+      <label class="field-label">Journey name</label>
+      <input class="note-input" type="text" x-model="editJourneyName" placeholder="e.g. Email" />
+    </div>
+    <div>
+      <label class="field-label">Description <span class="optional">(optional)</span></label>
+      <input class="note-input" type="text" x-model="editJourneyDesc" placeholder="e.g. Transactional and marketing emails" />
+    </div>
+    <p class="error-msg" x-show="editJourneyError" x-text="editJourneyError"></p>
+  </div>
+  <div slot="footer">
+    <button
+      class="save-btn"
+      @click="saveJourney()"
+      :disabled="editJourneySaving || !editJourneyName"
+      x-text="editJourneySaving ? 'Saving…' : 'Save changes'"
+    ></button>
+  </div>
+</Modal>
+
+<!-- SECTION MANAGEMENT MODAL -->
+<Modal title="Manage sections" state="sectionOpen">
+  <div slot="body">
+    <template x-if="(currentFile?.meta?.groups ?? []).length === 0">
+      <p class="hist-empty">No sections yet. Add one below.</p>
+    </template>
+    <template x-for="(group, index) in (currentFile?.meta?.groups ?? [])" :key="group">
+      <div class="section-row">
+        <template x-if="sectionEditIndex !== index">
+          <span class="section-name" x-text="group"></span>
+        </template>
+        <template x-if="sectionEditIndex === index">
+          <input
+            class="note-input section-rename-input"
+            type="text"
+            x-model="sectionEditName"
+            @keydown.enter="renameGroup()"
+            @keydown.escape="sectionEditIndex = -1"
+          />
+        </template>
+        <div class="section-actions">
+          <template x-if="sectionEditIndex !== index">
+            <button class="icon-btn" @click="sectionEditIndex = index; sectionEditName = group" :disabled="sectionSaving" title="Rename">&#x270E;</button>
+          </template>
+          <template x-if="sectionEditIndex === index">
+            <button class="save-btn" style="padding:5px 12px;font-size:12px;" @click="renameGroup()" :disabled="sectionSaving">OK</button>
+          </template>
+          <button class="icon-btn icon-btn--danger" @click="deleteGroup(group)" :disabled="sectionSaving" title="Delete section"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+        </div>
+      </div>
+    </template>
+    <div class="section-add-row">
+      <input
+        class="note-input"
+        type="text"
+        x-model="sectionNewName"
+        placeholder="New section name"
+        @keydown.enter="addGroup()"
+      />
+      <button class="add-key-btn" @click="addGroup()" :disabled="sectionSaving || !sectionNewName.trim()">Add</button>
+    </div>
+  </div>
+</Modal>
+
+</div>
+</Shell>
