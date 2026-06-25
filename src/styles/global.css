@@ -794,6 +794,34 @@ select.note-input {
 }
 .groups-btn:hover { background: var(--border); }
 
+/* EXPORT MODAL */
+.export-scope-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+.export-scope-label strong { color: var(--text); }
+.export-history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+}
+.export-history-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.export-history-check {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 /* SECTION MODAL */
 .section-row {
   display: flex;

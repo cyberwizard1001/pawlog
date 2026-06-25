@@ -92,6 +92,15 @@ document.addEventListener('alpine:init', () => {
     importing: false,
     importError: '',
 
+    exportOpen: false,
+    exportMode: 'page',
+    exportJourneySlug: '',
+    exportJourneyName: '',
+    exportPath: '',
+    exportSection: '',
+    exportSections: [],
+    exportHistory: false,
+
     get filteredItems() {
       if (!this.currentFile) return {};
       const items = this.currentFile.items ?? {};
@@ -629,6 +638,39 @@ document.addEventListener('alpine:init', () => {
       } finally {
         this.importing = false;
       }
+    },
+
+    openExportJourney(journey) {
+      this.exportMode = 'journey';
+      this.exportJourneySlug = journey.slug;
+      this.exportJourneyName = journey.name;
+      this.exportSection = '';
+      this.exportSections = [];
+      this.exportHistory = false;
+      this.exportOpen = true;
+    },
+
+    openExportPage() {
+      this.exportMode = 'page';
+      this.exportPath = this.selectedPath;
+      this.exportJourneyName = '';
+      this.exportSection = '';
+      this.exportSections = this.currentFile?.meta?.groups ?? [];
+      this.exportHistory = false;
+      this.exportOpen = true;
+    },
+
+    doExport() {
+      let url;
+      if (this.exportMode === 'journey') {
+        url = `/api/export-word?journey=${encodeURIComponent(this.exportJourneySlug)}`;
+      } else {
+        url = `/api/export-word?path=${encodeURIComponent(this.exportPath)}`;
+        if (this.exportSection) url += `&section=${encodeURIComponent(this.exportSection)}`;
+      }
+      if (this.exportHistory) url += '&history=true';
+      window.location = url;
+      this.exportOpen = false;
     },
 
     async createKey() {

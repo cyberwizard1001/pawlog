@@ -50,11 +50,12 @@ import Modal from '../components/Modal.astro';
             <div class="journey-actions">
               <button class="new-page-btn" @click.stop="openNewPage(journey.slug)" title="New page">+</button>
               <button class="new-page-btn" @click.stop="openEditJourney(journey)" title="Edit journey">&#x270E;</button>
-              <button class="new-page-btn" @click.stop="exportJourney(journey.slug)" title="Export journey">&#x2193;</button>
-              <label class="new-page-btn" title="Import journey" style="cursor:pointer" @click.stop>
+              <button class="new-page-btn" @click.stop="exportJourney(journey.slug)" title="Export journey as JSON">&#x2193;</button>
+              <label class="new-page-btn" title="Import journey from JSON" style="cursor:pointer" @click.stop>
                 &#x2191;
                 <input type="file" accept=".json" style="display:none" @change="importJourney(journey.slug, $event.target.files[0]); $event.target.value=''">
               </label>
+              <button class="new-page-btn" @click.stop="openExportJourney(journey)" title="Export journey to Word"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
               <button class="new-page-btn new-page-btn--danger" @click.stop="deleteJourneyPending = journey.slug" title="Delete journey"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
             </div>
           </template>
@@ -173,6 +174,7 @@ import Modal from '../components/Modal.astro';
           <input type="file" accept=".json" style="display:none" @change="importPage($event.target.files[0]); $event.target.value=''">
         </label>
         <button class="icon-btn" @click="openEditPage()" title="Edit page">&#x270E;</button>
+        <button class="icon-btn" @click="openExportPage()" title="Export page"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
         <template x-if="!deletePagePending">
           <button class="icon-btn icon-btn--danger" @click="deletePagePending = true" title="Delete page"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
         </template>
@@ -534,6 +536,38 @@ import Modal from '../components/Modal.astro';
       :disabled="editJourneySaving || !editJourneyName"
       x-text="editJourneySaving ? 'Saving…' : 'Save changes'"
     ></button>
+  </div>
+</Modal>
+
+<!-- EXPORT MODAL -->
+<Modal title="Export to Word" state="exportOpen">
+  <div slot="body">
+    <p class="export-scope-label">
+      <span x-show="exportMode === 'journey'">Journey: <strong x-text="exportJourneyName"></strong></span>
+      <span x-show="exportMode === 'page'">Page: <strong x-text="currentFile?.meta?.page ?? ''"></strong></span>
+    </p>
+    <div x-show="exportMode === 'page' && exportSections.length > 0">
+      <label class="field-label">Section <span class="optional">(optional)</span></label>
+      <select class="note-input" x-model="exportSection">
+        <option value="">All sections</option>
+        <template x-for="s in exportSections" :key="s">
+          <option :value="s" x-text="s"></option>
+        </template>
+      </select>
+    </div>
+    <div class="export-history-row">
+      <label class="export-history-label">
+        <input type="checkbox" x-model="exportHistory" class="export-history-check" />
+        Include revision history
+      </label>
+      <span class="optional">Appends git log for each page</span>
+    </div>
+  </div>
+  <div slot="footer">
+    <button class="save-btn" @click="doExport()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="margin-right:6px;vertical-align:middle"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download .docx
+    </button>
   </div>
 </Modal>
 
