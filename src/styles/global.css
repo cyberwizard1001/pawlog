@@ -1092,6 +1092,30 @@ select.note-input {
   display: none;
 }
 
+.sidebar-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.import-banner {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.import-banner--error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+}
+.import-banner--loading {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+}
+
 /* RESPONSIVE */
 @media (max-width: 767px) {
   .sidebar-overlay { display: block; }

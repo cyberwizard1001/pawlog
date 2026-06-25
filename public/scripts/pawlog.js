@@ -89,6 +89,9 @@ document.addEventListener('alpine:init', () => {
     deleteJourneyPending: '',
     deleteJourneySaving: false,
 
+    importing: false,
+    importError: '',
+
     get filteredItems() {
       if (!this.currentFile) return {};
       const items = this.currentFile.items ?? {};
@@ -527,6 +530,104 @@ document.addEventListener('alpine:init', () => {
         await this.loadTree();
       } finally {
         this.deleteJourneySaving = false;
+      }
+    },
+
+    triggerDownload(data, filename) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    async exportPage() {
+      if (!this.selectedPath) return;
+      const res = await fetch('/api/export?scope=page&path=' + encodeURIComponent(this.selectedPath));
+      const data = await res.json();
+      const filename = this.selectedPath.split('/').pop() || 'page.json';
+      this.triggerDownload(data, filename);
+    },
+
+    async importPage(file) {
+      if (!file || !this.selectedPath) return;
+      this.importing = true;
+      this.importError = '';
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'page', path: this.selectedPath, data, note: 'Import page' }),
+        });
+        const body = await res.json();
+        if (!res.ok) { this.importError = body.error || 'Import failed'; return; }
+        await this.selectPage(this.selectedPath);
+      } catch {
+        this.importError = 'Invalid JSON file';
+      } finally {
+        this.importing = false;
+      }
+    },
+
+    async exportJourney(slug) {
+      const res = await fetch('/api/export?scope=journey&slug=' + encodeURIComponent(slug));
+      const data = await res.json();
+      this.triggerDownload(data, slug + '.json');
+    },
+
+    async importJourney(slug, file) {
+      if (!file) return;
+      this.importing = true;
+      this.importError = '';
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'journey', slug, data, note: 'Import journey: ' + slug }),
+        });
+        const body = await res.json();
+        if (!res.ok) { this.importError = body.error || 'Import failed'; return; }
+        await this.loadTree();
+        if (this.selectedPath?.startsWith(slug + '/')) await this.selectPage(this.selectedPath);
+      } catch {
+        this.importError = 'Invalid JSON file';
+      } finally {
+        this.importing = false;
+      }
+    },
+
+    async exportAll() {
+      const res = await fetch('/api/export?scope=all');
+      const data = await res.json();
+      this.triggerDownload(data, 'pawlog-export.json');
+    },
+
+    async importAll(file) {
+      if (!file) return;
+      this.importing = true;
+      this.importError = '';
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'all', data, note: 'Import all' }),
+        });
+        const body = await res.json();
+        if (!res.ok) { this.importError = body.error || 'Import failed'; return; }
+        await Promise.all([this.loadTree(), this.loadDashboard()]);
+        if (this.selectedPath) await this.selectPage(this.selectedPath);
+      } catch {
+        this.importError = 'Invalid JSON file';
+      } finally {
+        this.importing = false;
       }
     },
 

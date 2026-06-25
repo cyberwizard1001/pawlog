@@ -17,6 +17,13 @@ import Modal from '../components/Modal.astro';
   <div class="sidebar-header">
     <span class="sidebar-logo">&#x1F43E;</span>
     <span class="sidebar-title">Pawlog</span>
+    <div class="sidebar-header-actions">
+      <button class="new-page-btn" @click="exportAll()" title="Export all content">&#x2193;</button>
+      <label class="new-page-btn" title="Import all content" style="cursor:pointer">
+        &#x2191;
+        <input type="file" accept=".json" style="display:none" @change="importAll($event.target.files[0]); $event.target.value=''">
+      </label>
+    </div>
   </div>
   <nav class="sidebar-nav">
     <button
@@ -43,6 +50,11 @@ import Modal from '../components/Modal.astro';
             <div class="journey-actions">
               <button class="new-page-btn" @click.stop="openNewPage(journey.slug)" title="New page">+</button>
               <button class="new-page-btn" @click.stop="openEditJourney(journey)" title="Edit journey">&#x270E;</button>
+              <button class="new-page-btn" @click.stop="exportJourney(journey.slug)" title="Export journey">&#x2193;</button>
+              <label class="new-page-btn" title="Import journey" style="cursor:pointer" @click.stop>
+                &#x2191;
+                <input type="file" accept=".json" style="display:none" @change="importJourney(journey.slug, $event.target.files[0]); $event.target.value=''">
+              </label>
               <button class="new-page-btn new-page-btn--danger" @click.stop="deleteJourneyPending = journey.slug" title="Delete journey"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
             </div>
           </template>
@@ -81,6 +93,9 @@ import Modal from '../components/Modal.astro';
     </button>
     <span class="mobile-title">&#x1F43E; Pawlog</span>
   </div>
+
+  <div class="import-banner import-banner--error" x-show="importError" @click="importError = ''" x-text="importError"></div>
+  <div class="import-banner import-banner--loading" x-show="importing">Importing…</div>
 
   <div x-show="!selectedPath">
     <div class="loading-state" x-show="dashLoading" style="min-height:200px;">
@@ -152,6 +167,11 @@ import Modal from '../components/Modal.astro';
         <p class="page-desc" x-text="currentFile?.meta?.description ?? ''" x-show="currentFile?.meta?.description"></p>
       </div>
       <div class="header-actions">
+        <button class="icon-btn" @click="exportPage()" title="Export page JSON">&#x2193;</button>
+        <label class="icon-btn" title="Import page JSON" style="cursor:pointer">
+          &#x2191;
+          <input type="file" accept=".json" style="display:none" @change="importPage($event.target.files[0]); $event.target.value=''">
+        </label>
         <button class="icon-btn" @click="openEditPage()" title="Edit page">&#x270E;</button>
         <template x-if="!deletePagePending">
           <button class="icon-btn icon-btn--danger" @click="deletePagePending = true" title="Delete page"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>

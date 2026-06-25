@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const COPY_DIR = path.resolve(__dirname, '../../copy');
+export const COPY_DIR = process.env.COPY_DIR ?? path.resolve(__dirname, '../../copy');
 
 function run(cmd: string, cwd = COPY_DIR): string {
   try {
